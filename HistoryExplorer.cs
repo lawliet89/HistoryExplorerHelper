@@ -18,6 +18,7 @@ namespace HistoryExplorerHelper
     public class HistoryExplorer<TChangeSet, TStaff> where TChangeSet : IChangeSet<TStaff>
     {
         private FrameLog.History.HistoryExplorer<TChangeSet, TStaff> inner;
+        private IHistoryContext<TChangeSet, TStaff> context;
 
         public HistoryExplorer(IHistoryContext<TChangeSet, TStaff> context)
         {
@@ -25,6 +26,7 @@ namespace HistoryExplorerHelper
             rehydrateCollectionMethod = GetType().GetMethod("rehydrateCollection", BindingFlags.Instance | BindingFlags.NonPublic);
             getObjectAtMethod = GetType().GetMethods().Single(m => m.HasAttribute<GetObjectAtAttribute>());
             rehydrateChildrenMethod = GetType().GetMethod("rehydrateChildren", BindingFlags.Instance | BindingFlags.NonPublic);
+            this.context = context;
         }
 
         public IEnumerable<IChange<TValue, TStaff>> ChangesTo<TModel, TValue>(TModel model, 
@@ -101,7 +103,7 @@ namespace HistoryExplorerHelper
             }
             if (recursiveHydration)
             {
-                obj = rehydrateChildren(obj, dateTime, new HashSet<object>());
+                obj = rehydrateChildren(obj, dateTime, new HashSet<object>(new EntityComparer(context)));
             }
             return obj;
         }
@@ -131,7 +133,7 @@ namespace HistoryExplorerHelper
                     if (collection == null)
                         continue;
                     var method = rehydrateCollectionMethod.MakeGenericMethod(entityType);
-                    method.Invoke(this, new[] {collection, dateTime, objectSet});
+                    method.Invoke(this, new[] { collection, dateTime, objectSet });
                 }
                 else if (property.PropertyType.ImplementsInterface<ICloneable>()
                          && property.PropertyType.HasEmptyConstructor())
@@ -169,16 +171,23 @@ namespace HistoryExplorerHelper
         {
             var items = collection.ToList();
             collection.Clear();
+            var newItems = new List<TModel>(items.Count);
             foreach (var item in items)
             {
                 if (!objectSet.Add(item))
-                    continue;
-                var newItem = GetObjectAt(item, dateTime);
-                newItem = rehydrateChildren(newItem, dateTime, objectSet);
-                collection.Add(item);
+                {
+                    // Already rehydrated -- just add it
+                    newItems.Add(item);
+                }
+                else
+                {
+                    var newItem = GetObjectAt(item, dateTime);
+                    newItem = rehydrateChildren(newItem, dateTime, objectSet);
+                    newItems.Add(newItem);
+                }
             }
-            
-        }     
+            collection.AddRange(newItems);
+        } 
     }
 
     /// <summary>
